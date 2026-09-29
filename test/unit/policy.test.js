@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { evaluatePolicy, topChoices } from "../../src/policy.js";
 import { T, SILENCE_COMPLETE_MS, PAYLOAD_SILENCE_MS } from "../../src/constants.js";
 
-/** Build a mocked Jev answer set. */
+/** Build a mocked Laya-compatible answer set. */
 function answers(over = {}) {
   const choice = (c, conf = 0.95, extra = {}) => ({ type: "choice", choice: c, confidence: conf, probabilities: { [c]: conf, none: 1 - conf, ...extra } });
   const base = {

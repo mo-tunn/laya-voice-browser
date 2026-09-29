@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { compactElements, detectSite, findSearchBox, approxTokens } from "../../src/snapshot.js";
-import { buildRequest, encodeElement } from "../../src/jev.js";
-import { MAX_ELEMENTS, MAX_STATE_CHARS } from "../../src/constants.js";
+import { buildRequest, encodeElement } from "../../src/laya.js";
+import { MAX_ELEMENTS } from "../../src/constants.js";
 
 const raw = (i, over = {}) => ({
   id: `e${String(i).padStart(2, "0")}`,
@@ -53,27 +53,46 @@ test("compactElements: state size guard keeps the serialized list under budget",
   assert.ok(out.length >= 5);
 });
 
-test("buildRequest: full state stays far below the 32k-token limit even with the max element list", () => {
+test("buildRequest: laya-browser observation stays bounded with the max element list", () => {
   const els = Array.from({ length: 400 }, (_, i) => raw(i + 1, { text: `Some fairly long link label number ${i} about a topic`, href: `news.example.com/story/${i}` }));
   const snapshot = { url: "https://news.example.com/", title: "News", site: "generic", elements: compactElements(els) };
-  const { state, questions } = buildRequest({ transcript: "click the first story", snapshot });
-  assert.ok(JSON.stringify(state).length <= MAX_STATE_CHARS);
+  const { state, page } = buildRequest({ transcript: "click the first story", snapshot });
   assert.ok(approxTokens(state) < 8000, `state ~${approxTokens(state)} tokens`);
-  assert.ok(Object.keys(questions.target.criteria).length <= MAX_ELEMENTS + 1);
-  assert.equal(questions.target.criteria.none !== undefined, true);
-  assert.equal(state.elements.length, snapshot.elements.length);
-  assert.ok(state.elements[0].startsWith("e02 link"), state.elements[0]);
+  assert.ok(page.actions.length <= MAX_ELEMENTS);
+  assert.equal(page.actions.length, snapshot.elements.length);
+  assert.equal(page.actions[0].id, "e02");
+  assert.ok(page.text.length <= 1200);
 });
 
-test("buildRequest: text_span / url_span only present when there are candidates; options are verbatim", () => {
+test("buildRequest: text / URL candidates remain verbatim and deterministic", () => {
   const snapshot = { url: "about:blank", title: "", site: "blank", elements: [] };
   const a = buildRequest({ transcript: "scroll down", snapshot });
-  assert.equal(a.questions.url_span, undefined);
+  assert.deepEqual(a.candidates.url, []);
   const b = buildRequest({ transcript: "type hello world into the search box", snapshot });
-  assert.ok("hello world" in b.questions.text_span.criteria);
-  assert.ok("none" in b.questions.text_span.criteria);
+  assert.equal(b.candidates.text[0], "hello world");
   const c = buildRequest({ transcript: "open example dot com", snapshot });
-  assert.ok("example.com" in c.questions.url_span.criteria);
+  assert.equal(c.candidates.url[0], "example.com");
+});
+
+test("buildRequest: select options occupy distinct model action indexes but map to one DOM id", () => {
+  const snapshot = {
+    url: "https://example.com/form",
+    title: "Form",
+    elements: [
+      { id: "e01", role: "select", text: "Language" },
+      { id: "e02", role: "button", text: "Continue" },
+    ],
+    rawById: {
+      e01: { role: "select", value: "en", options: [{ label: "English", value: "en" }, { label: "Turkish", value: "tr" }] },
+      e02: { role: "button" },
+    },
+  };
+  const req = buildRequest({ transcript: "select Turkish from the language dropdown", snapshot });
+  assert.equal(req.page.actions.length, 3);
+  assert.equal(req.indexToId["1"], "e01");
+  assert.equal(req.indexToId["2"], "e01");
+  assert.equal(req.indexToId["3"], "e02");
+  assert.equal(req.page.actions[1].label, "Turkish");
 });
 
 test("encodeElement: compact line with host only when it differs from the page", () => {

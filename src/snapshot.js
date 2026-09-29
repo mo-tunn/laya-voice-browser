@@ -1,10 +1,10 @@
 /**
- * Perception: turn the controlled page into a compact, Jev-friendly state.
+ * Perception: turn the controlled page into a compact, Laya-friendly state.
  *
  *  - `collectElementsInPage` runs INSIDE the page (Playwright page.evaluate). It tags every
  *    interactive element with a stable `data-vb-id` (e01, e02, ...) and returns raw records.
  *  - `compactElements` runs in Node: prioritises viewport-visible elements, dedupes, truncates
- *    text and guards the total state size so it stays far below Jev's 32k-token limit.
+ *    text and guards the total state size so it stays within Laya's smaller local context budget.
  */
 import { MAX_ELEMENTS, MAX_ELEMENT_TEXT, MAX_STATE_CHARS } from "./constants.js";
 
@@ -105,6 +105,10 @@ export function collectElementsInPage() {
 
     const inViewport = rect.bottom > 0 && rect.top < vh && rect.right > 0 && rect.left < vw;
     const inputName = clean(el.getAttribute("name")) || clean(el.getAttribute("id"));
+    const value = "value" in el ? clean(el.value) : "";
+    const options = tag === "select"
+      ? Array.from(el.options || []).slice(0, 50).map((o) => ({ label: clean(o.label || o.textContent), value: String(o.value ?? "") }))
+      : undefined;
 
     out.push({
       id,
@@ -115,6 +119,11 @@ export function collectElementsInPage() {
       href,
       type,
       inputName,
+      value,
+      checked: "checked" in el ? Boolean(el.checked) : undefined,
+      selected: "selected" in el ? Boolean(el.selected) : undefined,
+      expanded: el.getAttribute("aria-expanded") == null ? undefined : el.getAttribute("aria-expanded") === "true",
+      options,
       inViewport,
       top: Math.round(rect.top + win.scrollY),
       left: Math.round(rect.left + win.scrollX),
@@ -124,6 +133,7 @@ export function collectElementsInPage() {
   return {
     url: location.href,
     title: doc.title,
+    text: clean(doc.body?.innerText || "").slice(0, 4000),
     scrollY: win.scrollY,
     scrollHeight: doc.documentElement.scrollHeight,
     viewportHeight: vh,
@@ -131,7 +141,7 @@ export function collectElementsInPage() {
   };
 }
 
-/** Coarse site detection from the URL (code, not Jev). */
+/** Coarse site detection from the URL (code, not Laya). */
 export function detectSite(url) {
   let host = "";
   try {
@@ -176,7 +186,7 @@ function truncate(s, n) {
 }
 
 /**
- * Build the compact element list that goes into the Jev state.
+ * Build the compact element list that goes into the Laya state.
  * Priority: viewport-visible first (top-to-bottom), then the rest. Dedupe on (role, text, href).
  * Drops nameless elements unless they are inputs. Enforces MAX_ELEMENTS and MAX_STATE_CHARS.
  */
@@ -214,7 +224,7 @@ export function compactElements(rawElements, opts = {}) {
   return out;
 }
 
-/** Full snapshot record used by the controller: raw (for execution) + compact (for Jev). */
+/** Full snapshot record used by the controller: raw (for execution) + compact (for Laya). */
 export function buildSnapshot(pageData, extra = {}) {
   const elements = compactElements(pageData.elements);
   const searchBoxId = findSearchBox(pageData.elements);
@@ -222,6 +232,7 @@ export function buildSnapshot(pageData, extra = {}) {
   return {
     url: pageData.url,
     title: pageData.title,
+    text: pageData.text || "",
     site,
     scrollY: pageData.scrollY,
     scrollHeight: pageData.scrollHeight,

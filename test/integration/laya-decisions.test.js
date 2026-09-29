@@ -1,16 +1,17 @@
 /**
- * Integration test against the REAL Jev API: given a page snapshot fixture and a transcript,
- * does the (Jev answers -> policy) pipeline produce the expected intent / target / decision?
+ * Integration test against the REAL local Laya service: given a page snapshot fixture and a transcript,
+ * does the (Laya answers -> policy) pipeline produce the expected intent / target / decision?
  *
- * Prints a pass-rate report and per-call latency. Requires TYPESAFE_API_KEY (or JEV_API_KEY);
- * skips otherwise. Cost of a full run: well under one cent.
+ * Prints a pass-rate report and per-call latency. The first run may download the selected
+ * Laya checkpoint from Hugging Face.
  */
-import { test, before } from "node:test";
+import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { decide, hasApiKey } from "../../src/jev.js";
+import { decide } from "../../src/laya.js";
+import { ensureLayaServer, stopLayaServer } from "../../src/laya-process.js";
 import { evaluatePolicy } from "../../src/policy.js";
 import { MODEL } from "../../src/constants.js";
 
@@ -63,7 +64,7 @@ const FORM_PAGE = {
 };
 
 /**
- * Each case: transcript + snapshot + expectations on Jev's raw answers and/or the policy result.
+ * Each case: transcript + snapshot + expectations on Laya's raw answers and/or the policy result.
  *   intent:   expected `intent.choice`
  *   target:   expected `target.choice` (optional)
  *   decision: expected policy decision (optional)
@@ -146,12 +147,16 @@ CASES.push(
 
 const results = [];
 
-before(() => {
-  if (!hasApiKey()) console.log("SKIP: no TYPESAFE_API_KEY / JEV_API_KEY set");
+before(async () => {
+  await ensureLayaServer();
+});
+
+after(async () => {
+  await stopLayaServer();
 });
 
 for (const c of CASES) {
-  test(`jev: ${c.name} — "${c.transcript}"`, { skip: !hasApiKey() }, async () => {
+  test(`laya: ${c.name} — "${c.transcript}"`, async () => {
     const snapshot = typeof c.snapshot === "string" ? fixture(c.snapshot) : c.snapshot;
     const r = await decide({ transcript: c.transcript, snapshot, context: c.context ?? null });
     const policy = evaluatePolicy({ answers: r.answers, candidates: r.candidates, snapshot, isFinal: c.final !== false, context: c.context ?? null });
@@ -178,13 +183,13 @@ for (const c of CASES) {
   });
 }
 
-test("integration pass-rate report", { skip: !hasApiKey() }, () => {
+test("integration pass-rate report", () => {
   const passed = results.filter((r) => r.ok).length;
   const lat = results.map((r) => r.latency).sort((a, b) => a - b);
   const p50 = lat[Math.floor(lat.length / 2)];
   const avg = Math.round(lat.reduce((a, b) => a + b, 0) / lat.length);
   const tokens = results.reduce((a, r) => a + r.tokens, 0);
   const rate = passed / results.length;
-  console.log(`\n  ${MODEL}: ${passed}/${results.length} cases passed (${(rate * 100).toFixed(1)}%) · latency avg ${avg} ms, p50 ${p50} ms, max ${lat[lat.length - 1]} ms · ${tokens} input tokens ($${((tokens / 1e6) * 0.042).toFixed(5)})\n`);
+  console.log(`\n  ${MODEL}: ${passed}/${results.length} cases passed (${(rate * 100).toFixed(1)}%) · latency avg ${avg} ms, p50 ${p50} ms, max ${lat[lat.length - 1]} ms · ${tokens} input tokens · local inference\n`);
   assert.ok(rate >= 0.9, `pass rate ${(rate * 100).toFixed(1)}% is below 90%`);
 });

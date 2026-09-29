@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>voice-browser · Jev control room</title>
+<title>voice-browser · Laya control room</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
   :root{
@@ -74,7 +74,7 @@
 </head>
 <body>
 <header>
-  <h1><span>●</span> voice-browser <span class="small" style="color:var(--muted);font-weight:400">— Jev decides, Playwright acts</span></h1>
+  <h1><span>●</span> voice-browser <span class="small" style="color:var(--muted);font-weight:400">— local Laya decides, Playwright acts</span></h1>
   <span class="pill">model <b id="model">–</b></span>
   <span class="pill">last <b id="lat">–</b> ms · p50 <b id="p50">–</b> ms</span>
   <span class="pill">calls <b id="calls">0</b> · actions <b id="actions">0</b></span>
@@ -100,7 +100,7 @@
         <button type="submit">Run</button>
       </form>
       <div id="pending" class="small" style="margin-top:8px"></div>
-      <div class="small" style="margin-top:6px">Mic needs Chrome/Edge (Web Speech API). Partial transcripts stream to the server as you speak; each update = one Jev request (stale ones are cancelled).</div>
+      <div class="small" style="margin-top:6px">Mic needs Chrome/Edge (Web Speech API). Partial transcripts stream to the server as you speak; each update = one local Laya request (stale ones are cancelled).</div>
     </div>
 
     <div class="card grow">
@@ -150,7 +150,7 @@
       </dl>
     </div>
     <div class="card grow">
-      <h2>elements sent to Jev <span class="r small" id="elcount"></span></h2>
+      <h2>elements sent to Laya <span class="r small" id="elcount"></span></h2>
       <div class="grow" id="elements"></div>
     </div>
   </div>

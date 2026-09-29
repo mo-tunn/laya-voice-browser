@@ -4,7 +4,7 @@
  *
  * Replays scripted commands word by word (simulating partial speech transcripts) through the
  * SAME controller the live server uses, against real websites, and asserts the resulting URLs /
- * page state. Prints per-step Jev latency and how early (at which word) the browser acted.
+ * page state. Prints per-step Laya latency and how early (at which word) the browser acted.
  *
  *   npm run demo            # headed (watch it happen)
  *   npm run demo:ci         # headless, exits non-zero on failure
@@ -16,7 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { BrowserManager } from "../src/browser.js";
 import { Controller } from "../src/controller.js";
-import { hasApiKey } from "../src/jev.js";
+import { ensureLayaServer, stopLayaServer } from "../src/laya-process.js";
 import { MODEL } from "../src/constants.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -30,11 +30,6 @@ const flag = (name, dflt) => {
 const HEADLESS = args.includes("--headless") || process.env.CI === "1" || process.env.CI === "true";
 const WORD_MS = Number(flag("--word-ms", HEADLESS ? 280 : 380));
 const ONLY = flag("--only", null) ? String(flag("--only")).split(",").map(Number) : null;
-
-if (!hasApiKey()) {
-  console.error("Missing TYPESAFE_API_KEY (or JEV_API_KEY). Run via ./run.sh or export it.");
-  process.exit(1);
-}
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -66,7 +61,7 @@ const STEPS = [
   { say: "click the new link", expect: (b) => url(b).includes("news.ycombinator.com/newest") },
   {
     say: "click on a link please",
-    // Ambiguous on purpose: either Jev is confident and clicks something, or it shows numbered
+    // Ambiguous on purpose: either Laya is confident and clicks something, or it shows numbered
     // candidates and we answer with a number.
     followUpOnCandidates: "the first one",
     expect: (b) => !/news\.ycombinator\.com\/newest$/.test(url(b)),
@@ -81,6 +76,7 @@ const STEPS = [
 ];
 
 async function main() {
+  await ensureLayaServer();
   const profileDir = HEADLESS ? fs.mkdtempSync(path.join(os.tmpdir(), "vb-demo-")) : path.join(__dirname, "..", ".browser-profile-demo");
   const browser = new BrowserManager();
   await browser.launch({ headless: HEADLESS, profileDir, startUrl: "about:blank" });
@@ -102,7 +98,7 @@ async function main() {
 
   // ---- summary
   console.log("\n" + "─".repeat(100));
-  console.log("step  result  acted@word  jev(ms)  word→decision(ms)  word→done(ms)  phrase");
+  console.log("step  result  acted@word  laya(ms) word→decision(ms)  word→done(ms)  phrase");
   for (const r of results) {
     console.log(
       `${String(r.no).padStart(3)}   ${r.ok ? " PASS " : " FAIL "}  ${String(r.actedAt ?? "-").padStart(9)}  ${String(r.latency ?? "-").padStart(7)}  ${String(r.cmdToDecide ?? "-").padStart(17)}  ${String(r.cmdToAct ?? "-").padStart(13)}  "${r.say}"${r.note ? `  (${r.note})` : ""}`,
@@ -114,7 +110,7 @@ async function main() {
   const avgDecide = decided.length ? Math.round(decided.reduce((a, b) => a + b, 0) / decided.length) : "-";
   console.log("─".repeat(100));
   console.log(
-    `${passed}/${results.length} steps passed · ${s.calls} Jev calls · Jev latency avg ${s.avgLatencyMs} ms, p50 ${s.p50LatencyMs} ms · last word→decision avg ${avgDecide} ms · last word→action done avg ${s.avgCommandToActionMs} ms (includes page loads) · ${s.inputTokens} input tokens · $${s.costUsd.toFixed(5)} total`,
+    `${passed}/${results.length} steps passed · ${s.calls} Laya calls · Laya latency avg ${s.avgLatencyMs} ms, p50 ${s.p50LatencyMs} ms · last word→decision avg ${avgDecide} ms · last word→action done avg ${s.avgCommandToActionMs} ms (includes page loads) · ${s.inputTokens} input tokens · local inference`,
   );
   console.log("(word→decision includes the 200 ms debounce; acted@word < total means the browser acted before the sentence ended)");
 
@@ -124,6 +120,7 @@ async function main() {
   }
   await controller.close();
   await browser.close();
+  await stopLayaServer();
   if (HEADLESS) fs.rmSync(profileDir, { recursive: true, force: true });
   process.exit(passed === results.length ? 0 : 1);
 }

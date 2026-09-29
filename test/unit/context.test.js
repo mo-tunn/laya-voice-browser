@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildRequest, encodeContext } from "../../src/jev.js";
+import { buildRequest, encodeContext } from "../../src/laya.js";
 import { evaluatePolicy, reverseAction } from "../../src/policy.js";
 import { T } from "../../src/constants.js";
 
@@ -36,13 +36,14 @@ test("encodeContext: previous page + recent actions, most recent first, compact"
   assert.equal(encodeContext({ previousPage: null, recentActions: [] }), null);
 });
 
-test("buildRequest: context is in the state and is_correction is only asked when there is history", () => {
+test("buildRequest: browser history + diagnostic context are included only when there is history", () => {
   const withCtx = buildRequest({ transcript: "open the documentation", snapshot, context });
   assert.equal(withCtx.state.context.previous_page.title, "typesafe jev at DuckDuckGo");
-  assert.ok(withCtx.questions.is_correction, "is_correction asked when there are recent actions");
+  assert.equal(withCtx.history.length, 2);
+  assert.equal(withCtx.history[1].kind, "click_element");
   const noCtx = buildRequest({ transcript: "open the documentation", snapshot });
   assert.equal(noCtx.state.context, undefined);
-  assert.equal(noCtx.questions.is_correction, undefined);
+  assert.deepEqual(noCtx.history, []);
 });
 
 test("reverseAction: navigation/click → back, typing → clear, tabs/scroll → opposite", () => {
@@ -83,7 +84,7 @@ test("policy: 'no, the other one' excludes the previously clicked element and ta
   const answers = {
     ...base,
     intent: { choice: "click_element", confidence: 0.8, probabilities: { click_element: 0.85, none: 0.15 } },
-    // Jev still leans to the element just clicked; policy must rule it out.
+    // The model may still lean to the element just clicked; policy must rule it out.
     target: { choice: "e01", confidence: 0.6, probabilities: { e01: 0.55, e02: 0.4, e03: 0.05, none: 0 } },
     is_correction: { noul: 0.9 },
   };

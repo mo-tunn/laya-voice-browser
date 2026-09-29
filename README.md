@@ -1,178 +1,239 @@
-# voice-browser — talk to a real browser, it acts before you finish the sentence
+# Laya Voice Browser
 
-A Node app that controls a **headed Chromium window** (Playwright) by voice. Speech is streamed
-word by word from the browser's Web Speech API to a small Node server; on every partial transcript
-the server asks **Jev** (TypeSafe's System One model, `jev-1.13.0`) one request with a dozen typed
-questions — intent, target element, site, "is the command complete?", "is this even addressed to
-me?", "is it destructive?" — gets typed probabilities back in ~250–350 ms, and code decides whether
-to act, wait, ask, or ignore.
+Voice-controlled Chromium automation with a local browser-specialized Laya model and Playwright.
 
-Jev never generates text. Search queries, typed text and URLs are extracted as candidate spans by
-code and Jev only *picks* one, which is copied verbatim.
+This project started from [moritzkremb/jev-voice-browser](https://github.com/moritzkremb/jev-voice-browser) and has since been substantially reworked. The current version removes the hosted TypeSafe/JEV dependency, uses the local [cklxx/laya-browser](https://huggingface.co/cklxx/laya-browser) checkpoint for page-local semantic decisions, and keeps deterministic browser control logic in code.
 
+## Architecture
+
+```text
+Chrome / Edge microphone
+        |
+        v
+Web Speech API transcript
+        |
+        v
+Node controller
+  |-- deterministic navigation / search / tabs / scroll
+  |-- verbatim text and URL extraction
+  |-- explicit target resolution
+  |-- compact page snapshot
+        |
+        | only when page-local semantic judgment is needed
+        v
+local cklxx/laya-browser
+  page.actions + page text + goal + history
+        |
+        v
+operation + target probabilities
+        |
+        v
+policy.js
+ACT / WAIT / IGNORE / CONFIRM / DISAMBIGUATE
+        |
+        v
+Playwright -> controlled Chromium
 ```
- mic (Chrome, Web Speech API)          Node server (owns the API key)             controlled window
- ───────────────────────────    ws     ───────────────────────────────────         ──────────────────
- partial transcripts  ───────────────▶ debounce 200 ms                            headed Chromium via
- "go to"  "go to wiki"                 snapshot page (≤100 elements, e01..eNN) ◀── Playwright, persistent
- "go to wikipedia" (final)             ONE Jev request: 9–11 questions             profile, overlay
-                                       policy (thresholds in constants.js)  ───▶  highlight / toast /
- control page ◀─────────────────────── decision + bars + latency + cost            numbered candidates
-```
 
-## Run it
+The model does not generate URLs or typed text. Spoken URLs, search queries, and form text are extracted deterministically from the transcript. The model is mainly used for ambiguous page-local operation and target selection.
 
-Requirements: Node ≥ 20 (tested on 22), npm, Chrome or Edge for the microphone (the Web Speech API
-is not available in Firefox/Safari). Real API calls cost ~$0.0002 each.
+## What is local?
 
-```bash
-git clone https://github.com/moritzkremb/jev-voice-browser.git
-cd jev-voice-browser
+- Laya browser inference: local
+- Playwright / Chromium control: local
+- Policy and command routing: local
+- STT: currently the browser Web Speech API
+
+There is no TypeSafe/JEV API dependency, no hosted Laya inference call, and no model API key.
+
+Speech-to-text currently uses `SpeechRecognition` / `webkitSpeechRecognition`. Depending on the browser/platform implementation, STT may use a browser-provided remote speech service and is therefore not guaranteed to work offline.
+
+## Windows quick start
+
+Requirements:
+
+- Node.js >= 20
+- Python available through `py`
+- Chrome or Edge
+- NVIDIA GPU optional but strongly recommended
+
+```powershell
+git clone https://github.com/mo-tunn/laya-voice-browser.git
+cd laya-voice-browser
+
 npm install
+npm run setup:laya
 npx playwright install chromium
-cp .env.example .env          # paste your TypeSafe API key (https://console.typesafe.ai/keys)
-./run.sh                      # starts the server on http://localhost:8787
+
+.\run.ps1
 ```
 
-Then open **http://localhost:8787 in your normal Chrome**, click **Start mic**, allow the
-microphone, and speak. A separate Chromium window (the *controlled* browser) is opened by the server;
-that is the one that acts. Keep the control page visible on a second screen / half the screen for
-the live probability bars.
+You can also use:
 
-Options: `./run.sh --port 9000`, `--host 0.0.0.0` (LAN, see Security), `--start-url https://…`, `--headless` (CI), or attach to a Chrome
-you already have running instead of launching one:
-
-```bash
-# start your Chrome with a debugging port, then:
-./run.sh --cdp http://127.0.0.1:9222
+```powershell
+.\run.cmd
 ```
 
-Set the key yourself instead of `.env`: `export TYPESAFE_API_KEY=…` (legacy `JEV_API_KEY` is
-also accepted) and `npm start`. The key is only ever read by the Node process; the control page
-never sees it.
+The launcher prefers port `8787`. If it is occupied, it automatically selects the next free local port and prints the control-room URL.
 
-**Security:** the server listens on `127.0.0.1` only. Anyone who can reach the control port can
-drive the browser and spend your API credits, so only use `--host 0.0.0.0` on a network you trust.
-The controlled Chromium uses a persistent profile in `.browser-profile/` (gitignored) — don't log
-into accounts there that you wouldn't want a mis-heard "click place order" to touch; destructive
-clicks require a spoken "confirm", but treat that as a convenience, not a guarantee.
+Pressing **Ctrl+C** shuts down the Node process and the project-owned Laya / Playwright child processes.
 
-No microphone? Type a command into the text box on the control page and press Enter.
+Open the printed control-room URL in normal Chrome or Edge and click **Start mic**.
 
-## What you can say
+## Local model setup
 
-| Say | What happens |
+`npm run setup:laya` creates a project-local `.venv`.
+
+On Windows with an NVIDIA driver, the setup script installs the CUDA-enabled PyTorch build when possible. To force CPU-only setup:
+
+```powershell
+$env:LAYA_SETUP_CPU=1
+npm run setup:laya
+```
+
+The first model start downloads `cklxx/laya-browser` from Hugging Face. Later starts use the local cache.
+
+Default local endpoints:
+
+```text
+control room: http://127.0.0.1:8787
+model HTTP:   http://127.0.0.1:8001
+model:        cklxx/laya-browser
+```
+
+The Node app starts the model bridge automatically:
+
+```text
+.venv\Scripts\python.exe scripts\laya-browser-server.py
+```
+
+## Configuration
+
+A local `.env` file is optional.
+
+```text
+LAYA_URL=http://127.0.0.1:8001
+LAYA_MODEL=cklxx/laya-browser
+# LAYA_DEVICE=cuda
+LAYA_AUTO_START=1
+LAYA_START_TIMEOUT_MS=300000
+LAYA_TIMEOUT_MS=30000
+
+PORT=8787
+HOST=127.0.0.1
+```
+
+If `LAYA_DEVICE` is omitted, the Python bridge selects CUDA when available and otherwise uses CPU.
+
+## Example commands
+
+| Command | Behavior |
 | --- | --- |
-| "go to wikipedia" / "open youtube" / "go to example dot com" | navigates (site list or spoken domain, code owns the URLs) |
-| "search for alan turing" | uses the page's own search box if it has one (Wikipedia, YouTube…), else DuckDuckGo |
-| "search youtube for lofi beats" | site-specific search URL template |
-| "click the first result" / "click the new link" / "open the comments tab" | clicks the element Jev picked from the snapshot; ambiguous → numbered overlays, say "two" |
-| "type hello world into the search box" | types verbatim (Jev picked the span, code copies it) |
-| "scroll down a bit" / "scroll to the bottom" / "scroll up a page" | scroll with amount from a 3-level Score |
-| "go back" / "go forward" / "reload" | history |
-| "open a new tab" / "close this tab" / "next tab" | tabs |
-| "click place order" | destructive → toast asks you to say **"confirm"** (or "cancel") |
-| "so anyway I think we should get lunch" | ignored (`is_command` ≈ 0.02) |
+| `go to wikipedia` | deterministic navigation |
+| `open example dot com` | spoken URL normalization |
+| `search for alan turing` | page search box or deterministic web search |
+| `search youtube for lofi beats` | deterministic site search |
+| `click the first result` | deterministic ordinal result resolution |
+| `click the github link` | explicit target filtering + model fallback |
+| `open the documentation` | semantic page-local target selection |
+| `type hello world into the search box` | model selects field; text stays verbatim |
+| `scroll down a bit` | deterministic scroll |
+| `go back` / `reload` | deterministic browser control |
+| `open a new tab` | deterministic tab control |
+| `click place order` | destructive-action confirmation gate |
 
-Two commands in one breath work too: "go to example dot com and click the more information link".
+Multi-command speech is supported, for example:
 
-## How a decision is made
+```text
+go to example dot com and click the more information link
+```
 
-Every transcript update produces exactly one Jev request (`src/jev.js`). State:
+## Why hybrid routing?
+
+The generic Laya `typed-decisions` checkpoint is not specialized for browser element selection. On this project's 34-case browser decision suite it reached 10/34.
+
+The browser-specialized checkpoint performs much better when it receives the observation format it was trained for:
 
 ```json
-{ "transcript": "open the documentation",
-  "page": { "url": "https://typesafe.ai/jev", "title": "Jev", "site": "generic" },
-  "elements": ["e03 link \"Documentation\" → docs.typesafe.ai", "e07 link \"Read the docs\" → docs.typesafe.ai", "..."],
-  "context": {
-    "previous_page": { "url": "https://duckduckgo.com/?q=jev+typesafe", "title": "jev typesafe at DuckDuckGo" },
-    "recent_actions": [
-      { "said": "click the first result", "action": "click_element", "target": "link \"TypeSafe — Jev\"", "outcome": "navigated to typesafe.ai/jev", "seconds_ago": 6 },
-      { "said": "search for jev typesafe", "action": "navigate_url", "outcome": "navigated to duckduckgo.com/?q=jev+typesafe", "seconds_ago": 25 } ] } }
+{
+  "url": "https://example.com",
+  "title": "Example",
+  "text": "visible page text",
+  "actions": [
+    {
+      "id": "e01",
+      "node": "e01",
+      "kind": "click",
+      "label": "Learn more",
+      "role": "link"
+    }
+  ]
+}
 ```
 
-`context` is the conversation so far: the page you came from and the last three executed actions
-(what you said, what was done, what happened). It is what makes "go back to the results", "no, not
-that one", "the other one" and "open its documentation" resolvable — Jev has no memory between
-requests, so the memory lives in the state.
+The controller still avoids asking the model questions that code can answer exactly:
 
-Questions (all in `src/constants.js`, asked together, answered in parallel):
-
-| id | type | answers |
-| --- | --- | --- |
-| `intent` | Choice | navigate_url · search_web · click_element · type_into_field · select_option · press_enter · scroll_down/up · go_back/forward · reload · open/close/switch tab · confirm · cancel · none — each option has `{what, not_for, examples}` |
-| `target` | Choice | the element ids on the page + `none` |
-| `site` | Choice | google · duckduckgo · the_web · youtube · wikipedia · github · amazon · reddit · twitter_x · hacker_news · example_com · other_named_site · none |
-| `complete` | Noul | has the user finished the command? (lets us act on partial speech) |
-| `is_command` | Noul | is the user addressing the browser at all? |
-| `destructive` | Noul | would it submit / buy / delete / send? |
-| `scroll_amount` | Score | a little · one page · to the end |
-| `text_span` | Choice | verbatim candidate spans extracted by regex (+ `none`) — only when the transcript has any |
-| `url_span` | Choice | domain-looking spans (+ `none`) — only when present |
-| `tab_direction` | Choice | next · previous · first · none |
-| `is_correction` | Noul | is the user rejecting / redirecting the most recent action in `context.recent_actions`? — only asked when there is history |
-
-Policy (`src/policy.js`, thresholds `T` in `constants.js`), shown live in the UI as a gate table:
-
-0. `is_correction ≥ 0.6` on a finished phrase: with no confident new command ("no, not that one",
-   "undo that") → reverse the last action (click/navigate → back, typing → clear, scroll → opposite);
-   with a new target ("no, the other one") → the previously clicked element is excluded from the
-   candidates. A confident closed-set command ("go back" after a scroll) is never treated as a correction.
-1. `is_command ≥ 0.5` else **ignore**
-2. `intent.confidence ≥ 0.55` and not `none` else **wait**
-3. `complete ≥ 0.6`, or 900 ms of silence, or the recognizer's final result — else **wait**
-4. free-text intents (search / type) additionally wait for the final result or 600 ms silence, so a
-   query is never truncated ("search for alan" vs "search for alan turing")
-5. build the action in code: URL templates, search-box fallback, verbatim span copy
-6. click/type targets need `target.confidence ≥ 0.45` and top probability ≥ 0.35, else the top 2–3
-   candidates get numbered overlays in the page and a spoken number picks one (no model call)
-7. `destructive ≥ 0.5` on a click → **confirm** (say "confirm" / "cancel")
-
-Requests overlap: up to 2 in flight; older ones are cancelled with `AbortSignal`. A response for a
-partial transcript may still act if the words already commit to a closed-set action ("go back"),
-but is never treated as final for free text.
+- spoken URLs and payload text remain verbatim;
+- navigation/history/tab/scroll commands are closed-set;
+- `first result` / `second result` are resolved deterministically;
+- strong explicit element labels are resolved before fuzzy model output;
+- numbered disambiguation replies do not call the model;
+- destructive actions require a confirmation gate.
 
 ## Project layout
 
-```
-src/constants.js   MODEL pin, thresholds, every question text — the one file to review on camera
-src/jev.js         builds state + questions, calls @typesafe-ai/sdk, returns answers/latency/usage/cost
-src/spans.js       candidate extraction (text payloads, spoken URLs, number words) — code, not Jev
-src/snapshot.js    in-page element collector (tags data-vb-id), compaction + size guard, site detection
-src/policy.js      answers → act / wait / ignore / confirm / disambiguate, with reasons
-src/executor.js    Playwright actions + overlay feedback
-src/browser.js     launch headed Chromium (persistent profile) or attach via CDP; tabs
-src/overlay.js     injected highlight / toast / numbered badges
-src/controller.js  debounce, in-flight management, one action per utterance, chaining, stats
-src/server.js      Express + ws, serves src/public/index.html (control page)
-scripts/demo.js    word-by-word replay against real sites = end-to-end test
-test/unit/         spans, snapshot compaction, policy (mocked Jev), controller (mocked Jev + browser), context encoding + corrections
-test/integration/  34 real-API cases on captured page fixtures (incl. context / correction), prints pass rate + latency
-```
-
-## Tests and demo
-
-```bash
-npm test                 # unit tests (no network)
-npm run test:integration # real Jev calls on fixtures; prints pass rate (expects ≥ 90%)
-npm run demo             # headed replay of 16 spoken commands against real sites, asserts URLs
-npm run demo:ci          # same, headless; exit code 1 on failure
-node scripts/demo.js --headless --only 1,2,3 --word-ms 250
+```text
+src/start.js                    .env loader + app entrypoint
+src/server.js                   Express / WebSocket control server
+src/controller.js               streaming transcript orchestration
+src/snapshot.js                 DOM perception + compact action space
+src/spans.js                    deterministic text / URL extraction
+src/laya.js                     hybrid command router + Laya adapter
+src/laya-process.js             local model lifecycle
+src/policy.js                   action / wait / confirm / disambiguate policy
+src/executor.js                 Playwright execution
+scripts/laya-browser-server.py  local Hugging Face model HTTP bridge
+scripts/setup-laya.ps1          Windows Python / CUDA setup
+run.ps1                         PowerShell launcher and process supervisor
+run.cmd                         Windows convenience launcher
 ```
 
-Latest measured (Sep 2026, from this machine): integration 34/34 (100%, incl. 7 context/correction cases), Jev latency avg ≈ 330 ms
-(p50 ≈ 300 ms, 3–6k input tokens per request; the first request of a process is ~700 ms for the
-TLS handshake), last-word→decision ≈ 300 ms including the 200 ms debounce, whole demo ≈ $0.01.
+## Verification
 
-## Notes and limitations
+Current local verification:
 
-- Web Speech API only in Chrome/Edge; it sends audio to Google. Interim results arrive in bursts, so
-  "acting before you finish" is most visible on longer sentences.
-- One action per utterance; extra words after an executed command are treated as a new command
-  only if there are at least two of them.
-- Element snapshot is capped at 100 items (viewport first) and 60 chars of text each — deep pages
-  need a scroll before "click …" finds below-fold items. Elements inside iframes are not seen.
-- Sites with heavy bot protection (Google consent, some search engines in headless mode) may not
-  render results; the demo uses Wikipedia, example.com, Hacker News and DuckDuckGo.
-- `select_option` matches the option label in code by substring; `switch_tab` cycles.
-- Confidence gates are calibrated on `jev-1.13.0`; re-check `T` if you move the model alias.
+```text
+unit tests:          46/46 passed
+integration cases:   34/34 passed
+integration rate:    100%
+npm run test:all:    81/81 passed
+headless demo:       16/16 passed
+hosted model APIs:   0
+```
+
+On the tested RTX 3050 Ti laptop, warm page-local model decisions are generally in the tens to low hundreds of milliseconds. Deterministic global commands avoid model inference entirely.
+
+Run the checks yourself:
+
+```powershell
+npm test
+npm run test:integration
+npm run test:all
+npm run demo:ci
+```
+
+## Security
+
+The control server binds to `127.0.0.1` by default.
+
+The controlled Chromium profile persists under `.browser-profile/`.
+
+Destructive actions have a confirmation gate, but this is still browser automation. Use a dedicated browser profile and avoid leaving sensitive sessions open unnecessarily.
+
+The Hugging Face checkpoint is loaded with `trust_remote_code=True`. Pin a model revision if you need a fully reproducible or audited deployment.
+
+## License and attribution
+
+MIT licensed. The original Git history and license are retained.
+
+Original project: [moritzkremb/jev-voice-browser](https://github.com/moritzkremb/jev-voice-browser)

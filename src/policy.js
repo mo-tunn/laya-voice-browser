@@ -1,5 +1,5 @@
 /**
- * Execution policy: pure code that turns Jev's answers into ACT / WAIT / IGNORE / CONFIRM /
+ * Execution policy: pure code that turns Laya's answers into ACT / WAIT / IGNORE / CONFIRM /
  * DISAMBIGUATE. Every gate is a number from constants.js so the UI can show WHY.
  */
 import {
@@ -44,7 +44,7 @@ function fillTemplate(tpl, q) {
 
 /**
  * @param {object} p
- * @param {object} p.answers   Jev answers (intent, target, site, complete, is_command, destructive, scroll_amount, text_span?, url_span?, tab_direction)
+ * @param {object} p.answers   Laya answers (intent, target, site, complete, is_command, destructive, scroll_amount, text_span?, url_span?, tab_direction)
  * @param {object} p.candidates {text: string[], url: string[]}
  * @param {object} p.snapshot  current page snapshot (elements, searchBoxId, site, url)
  * @param {number} p.silentMs  ms since the transcript last changed
@@ -139,7 +139,7 @@ export function evaluatePolicy({ answers, candidates, snapshot, silentMs = 0, is
     }
   }
 
-  // 4. Build the concrete action (code owns URLs, templates and text; Jev only picked options).
+  // 4. Build the concrete action (code owns URLs, templates and text; Laya only picked options).
   // On a correction that names a new target, the previous target is not an option ("the other one").
   const excludeTargetId = isCorrection && TARGET_INTENTS.has(intentName) ? lastAction.targetId ?? null : null;
   const built = buildAction({ intentName, answers, candidates, snapshot, reasons, excludeTargetId });

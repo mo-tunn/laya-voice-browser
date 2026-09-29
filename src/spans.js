@@ -1,6 +1,6 @@
 /**
- * Candidate extraction (code, not Jev). Jev never generates text: we over-generate
- * candidate spans from the transcript here, and Jev only *picks* one of them.
+ * Candidate extraction (code, not Laya). Laya never generates text: we over-generate
+ * candidate spans from the transcript here, and Laya only *picks* one of them.
  * The chosen option is copied verbatim into the browser.
  */
 
@@ -128,7 +128,7 @@ const NUMBER_HOMOPHONES = { won: 1, to: 2, too: 2, for: 4 };
 
 /**
  * When numbered candidate overlays are on screen, a bare number ("two", "the second one",
- * "number 3") is a deterministic pick — no need to ask Jev.
+ * "number 3") is a deterministic pick — no need to ask Laya.
  * Returns 1-based index or null.
  */
 const PICK_STOPWORDS = new Set([

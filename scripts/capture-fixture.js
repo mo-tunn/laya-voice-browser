@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Capture a page snapshot fixture for tests: node scripts/capture-fixture.js <url> <name>
- * Writes test/fixtures/<name>.json (compact snapshot as sent to Jev, without rawById).
+ * Writes test/fixtures/<name>.json (compact snapshot as sent to Laya, without rawById).
  */
 import fs from "node:fs";
 import path from "node:path";

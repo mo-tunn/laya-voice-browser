@@ -1,5 +1,5 @@
 /**
- * Controller flow with a mocked Jev and a fake browser: debounce, one action per utterance,
+ * Controller flow with a mocked decision model and a fake browser: debounce, one action per utterance,
  * stale-request handling, candidate picking by number, chaining commands in one breath.
  */
 import { test } from "node:test";
@@ -38,7 +38,7 @@ function fakeBrowser() {
   };
 }
 
-/** Mock Jev: keyword-driven answers, with configurable latency. */
+/** Mock Laya-style decisions: keyword-driven answers, with configurable latency. */
 function mockDecide({ latency = 20, complete = (t) => (t.split(" ").length >= 2 ? 0.9 : 0.1) } = {}) {
   const calls = [];
   const fn = async ({ transcript }, { signal } = {}) => {
@@ -76,7 +76,7 @@ function mockDecide({ latency = 20, complete = (t) => (t.split(" ").length >= 2 
       latencyMs: latency,
       usage: { input_tokens: 1000, output_tokens: 10 },
       costUsd: 0.000042,
-      model: "jev-1.13.0",
+      model: "cklxx/laya-browser",
       requestId: "req",
       candidates: { text: [], url: [] },
       state: {},
@@ -166,7 +166,7 @@ test("ambiguous target shows numbered candidates; a spoken number picks without 
   await sleep(100);
   assert.equal(executed.length, 1);
   assert.equal(executed[0].targetId, "e01");
-  assert.equal(decideFn.calls.length, callsBefore, "no Jev call for the number");
+  assert.equal(decideFn.calls.length, callsBefore, "no Laya call for the number");
   await c.close();
 });
 
@@ -176,12 +176,12 @@ test("commands spoken in one breath: words after an executed command become a ne
   c.handleTranscript({ text: "go back", final: false, utteranceId: "u6" });
   await sleep(DEBOUNCE_MS + 150);
   assert.equal(executed.length, 1);
-  c.handleTranscript({ text: "go back scroll down", final: false, utteranceId: "u6" });
+  c.handleTranscript({ text: "go back and scroll down", final: false, utteranceId: "u6" });
   await sleep(DEBOUNCE_MS + 150);
   assert.equal(executed.length, 2);
   assert.equal(executed[1].type, "scroll_down");
   // one trailing word is ignored
-  c.handleTranscript({ text: "go back scroll down please", final: true, utteranceId: "u6" });
+  c.handleTranscript({ text: "go back and scroll down please", final: true, utteranceId: "u6" });
   await sleep(DEBOUNCE_MS + 150);
   assert.equal(executed.length, 2);
   await c.close();

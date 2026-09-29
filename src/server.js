@@ -1,5 +1,5 @@
 /**
- * Node server: serves the control page, bridges WebSocket <-> Controller, owns the API key.
+ * Node server: serves the control page and bridges WebSocket <-> Controller.
  *
  *   node src/server.js [--port 8787] [--host 127.0.0.1] [--headless] [--cdp ws://127.0.0.1:9222/devtools/browser/...] [--start-url https://...]
  */
@@ -10,16 +10,16 @@ import express from "express";
 import { WebSocketServer } from "ws";
 import { BrowserManager } from "./browser.js";
 import { Controller } from "./controller.js";
-import { hasApiKey } from "./jev.js";
-import { MODEL, QUESTIONS, T } from "./constants.js";
+import { ensureLayaServer, stopLayaServer } from "./laya-process.js";
+import { MODEL, T } from "./constants.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export function parseArgs(argv) {
   const out = {
     port: Number(process.env.PORT) || 8787,
-    // Bind to loopback only by default: anyone who can reach this port can drive the browser
-    // and spend your API credits. Use --host 0.0.0.0 deliberately if you need LAN access.
+    // Bind to loopback only by default: anyone who can reach this port can drive the browser.
+    // Use --host 0.0.0.0 deliberately if you need LAN access.
     host: process.env.HOST || "127.0.0.1",
     headless: false,
     cdp: null,
@@ -37,10 +37,7 @@ export function parseArgs(argv) {
 }
 
 export async function startServer(opts = {}) {
-  if (!hasApiKey()) {
-    console.error("Missing TYPESAFE_API_KEY (or JEV_API_KEY). Use ./run.sh or export it first.");
-    process.exit(1);
-  }
+  await ensureLayaServer();
   const browser = new BrowserManager();
   await browser.launch({ headless: opts.headless, cdp: opts.cdp, startUrl: opts.startUrl });
   const controller = new Controller({ browser });
@@ -49,7 +46,15 @@ export async function startServer(opts = {}) {
   const app = express();
   app.use(express.static(path.join(__dirname, "public")));
   app.get("/api/state", (_req, res) => res.json(controller.uiState()));
-  app.get("/api/questions", (_req, res) => res.json({ model: MODEL, thresholds: T, questions: QUESTIONS }));
+  app.get("/api/questions", (_req, res) => res.json({
+    model: MODEL,
+    thresholds: T,
+    architecture: {
+      deterministic: ["navigate/search", "history/tabs", "scroll", "confirmation", "verbatim text/URL extraction", "explicit ordinal/exact targets"],
+      model: "page-local operation + ambiguous element selection via cklxx/laya-browser",
+      modelInput: "page.actions + visible page text + goal + recent action history",
+    },
+  }));
 
   const server = http.createServer(app);
   const wss = new WebSocketServer({ server });
@@ -103,16 +108,21 @@ export async function startServer(opts = {}) {
   await new Promise((resolve) => server.listen(opts.port, host, resolve));
   const url = `http://localhost:${opts.port}`;
   if (host !== "127.0.0.1" && host !== "localhost") {
-    console.warn(`WARNING: listening on ${host} — anyone who can reach this port can control the browser and spend API credits.`);
+    console.warn(`WARNING: listening on ${host} — anyone who can reach this port can control the browser.`);
   }
   console.log(`\nvoice-browser ready → open ${url} in Chrome (mic needs Chrome/Edge)`);
   console.log(`model ${MODEL} · controlled window: ${opts.cdp ? "attached via CDP" : opts.headless ? "headless" : "headed Chromium"}\n`);
 
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.log("\nshutting down voice-browser...");
     await controller.close();
     await browser.close();
-    server.close();
-    process.exit(0);
+    await stopLayaServer();
+    await new Promise((resolve) => server.close(resolve));
+    process.exitCode = 0;
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);

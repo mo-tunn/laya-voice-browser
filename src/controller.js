@@ -1,10 +1,10 @@
 /**
- * Orchestrator: transcript updates -> (debounce, cancel stale) -> one Jev request ->
+ * Orchestrator: transcript updates -> (debounce, cancel stale) -> one Laya request ->
  * policy -> Playwright action -> fresh snapshot. Emits events for the UI / demo / tests.
  */
 import { EventEmitter } from "node:events";
 import { DEBOUNCE_MS, SILENCE_COMPLETE_MS, CANDIDATE_TTL_MS, MAX_INFLIGHT, MAX_CONTEXT_ACTIONS, MODEL, T } from "./constants.js";
-import { decide, isAbortError } from "./jev.js";
+import { decide, isAbortError } from "./laya.js";
 import { evaluatePolicy, describe } from "./policy.js";
 import { execute } from "./executor.js";
 import { parseCandidatePick, cleanTranscript } from "./spans.js";
@@ -15,7 +15,7 @@ const avg = (xs) => (xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.l
 export class Controller extends EventEmitter {
   /**
    * @param {{browser: import('./browser.js').BrowserManager, decideFn?: Function, executeFn?: Function}} opts
-   *   decideFn / executeFn are injectable for tests (default: real Jev + Playwright).
+   *   decideFn / executeFn are injectable for tests (default: real Laya + Playwright).
    */
   constructor({ browser, decideFn = decide, executeFn = execute }) {
     super();
@@ -31,12 +31,12 @@ export class Controller extends EventEmitter {
     this.lastDecision = null;
     this.debounceTimer = null;
     this.silenceTimer = null;
-    this.inflight = []; // [{ac, text, at}] requests currently awaiting Jev
+    this.inflight = []; // [{ac, text, at}] requests currently awaiting Laya
     this.busy = false;
     this.log = [];
     this.stats = { calls: 0, inputTokens: 0, costUsd: 0, latencies: [], actions: 0, model: MODEL, commandToActionMs: [], decisionMs: [] };
     this.history = [];
-    // Conversation context sent to Jev with every request (see jev.encodeContext):
+    // Conversation context sent to Laya with every request (see laya.encodeContext):
     // the page before the last navigation and the last few executed actions.
     this.context = { previousPage: null, recentActions: [] };
     browser.onChange(() => this.emit("tabs", browser.tabInfo()));
@@ -80,10 +80,23 @@ export class Controller extends EventEmitter {
     // ("please") are ignored.
     const consumed = this.consumed;
     let virtualId = utteranceId;
+    let continuationPrefix = "";
     if (consumed && consumed.id === utteranceId) {
       if (!clean.toLowerCase().startsWith(consumed.prefix)) return; // recognizer revised the executed words; ignore
-      clean = clean.slice(consumed.prefix.length).trim();
-      if (clean.split(/\s+/).filter(Boolean).length < 2) return;
+      let tail = clean.slice(consumed.prefix.length).trim();
+      continuationPrefix = consumed.prefix;
+      // Natural multi-command speech usually inserts a connector: "... and click ...",
+      // "... then scroll ...", "... and then go back". The connector belongs to the
+      // already-consumed prefix, not to the semantic text of the next virtual command.
+      const connector = tail.match(/^(?:(?:and\s+then)|and|then)\b\s*/i);
+      if (connector) {
+        continuationPrefix = `${consumed.prefix} ${connector[0].trim()}`.trim().toLowerCase();
+        tail = tail.slice(connector[0].length).trim();
+      }
+      clean = tail;
+      const words = clean.split(/\s+/).filter(Boolean);
+      const safeSingleWord = /^(?:back|forward|reload|refresh|confirm|cancel|submit)$/i.test(clean);
+      if (words.length < 2 && !safeSingleWord) return;
       virtualId = `${utteranceId}+${consumed.gen}`;
     }
 
@@ -91,7 +104,7 @@ export class Controller extends EventEmitter {
       this.utterance = {
         id: virtualId,
         physicalId: utteranceId,
-        prefix: consumed && consumed.id === utteranceId ? consumed.prefix : "",
+        prefix: consumed && consumed.id === utteranceId ? continuationPrefix || consumed.prefix : "",
         gen: consumed && consumed.id === utteranceId ? consumed.gen : 0,
         text: clean,
         final,
@@ -110,7 +123,7 @@ export class Controller extends EventEmitter {
     this.emit("transcript", { text: clean, final, utteranceId: virtualId, actedOn: this.utterance.actedOn });
     if (!clean || this.utterance.actedOn) return;
 
-    // Deterministic shortcut: numbered candidate overlays + a spoken number => no Jev needed.
+    // Deterministic shortcut: numbered candidate overlays + a spoken number => no Laya call needed.
     if (this.candidates && now - this.candidates.at < CANDIDATE_TTL_MS) {
       const n = parseCandidatePick(clean, this.candidates.list.length);
       if (n) {
@@ -140,7 +153,7 @@ export class Controller extends EventEmitter {
     };
   }
 
-  /** Ask Jev about the current utterance. Cancels any in-flight request. */
+  /** Ask Laya about the current utterance. Cancels any in-flight request. */
   async decideNow(trigger = "manual") {
     const utt = this.utterance;
     if (!utt || !utt.text || utt.actedOn) return;
@@ -181,7 +194,7 @@ export class Controller extends EventEmitter {
         this._log("debug", `cancelled stale request for "${textAtRequest}"`);
         return;
       }
-      this._log("error", `Jev error: ${err.message || err}`);
+      this._log("error", `Laya error: ${err.message || err}`);
       this.emit("error", err);
       return;
     }
@@ -304,7 +317,7 @@ export class Controller extends EventEmitter {
         decisionMs, // last word -> decision
         sinceLastWordMs: sinceLastWord, // last word -> action finished (includes page load)
         sinceUtteranceStartMs: sinceUtteranceStart,
-        via: meta.via || "jev",
+        via: meta.via || "laya-browser",
       };
       this._log(res.ok ? "act" : "warn", `${res.ok ? "✓" : "✗"} ${describe(action)} — decided ${decisionMs ?? "?"}ms after last word, executed in ${took}ms ${res.detail || ""}`);
       this.emit("action", entry);
@@ -318,7 +331,7 @@ export class Controller extends EventEmitter {
   }
 
   /**
-   * Remember what was just done so the next Jev request can resolve "back to the results",
+   * Remember what was just done so the next Laya request can resolve "back to the results",
    * "the other one", "not that one". Called after every executed action; the page snapshot is
    * refreshed by the caller right after, so `outcome` is derived from the post-action URL.
    */
